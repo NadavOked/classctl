@@ -342,7 +342,7 @@ def run_gui(cfg_path: str):
     pw.focus_set()
 
     show_pw = tk.BooleanVar(value=False)
-    ui.Checkbox(lw, "Show password", variable=show_pw, bg=SURFACE, font_size=9,
+    ui.Checkbox(lw, _("Show password"), variable=show_pw, bg=SURFACE, font_size=9,
                 fg=MUTED,
                 command=lambda: pw.config(show="" if show_pw.get() else "\u2022")
                 ).pack()
@@ -593,7 +593,7 @@ def run_gui(cfg_path: str):
             n = len(targets) - len(skipped)
             big.config(text=str(n))
             sub.config(text=_("stations will run this") if n != 1
-                       else "station will run this")
+                       else _("station will run this"))
 
         def toggle_station(host):
             if host in skipped:
@@ -621,13 +621,13 @@ def run_gui(cfg_path: str):
                 tiles.clear()
                 hint.pack_forget()
                 shown["v"] = False
-                tog.set_text("Choose stations")
+                tog.set_text(_("Choose stations"))
             else:
                 draw_grid()
                 hint.config(text=_("Tap a station to leave it out of this action."))
                 hint.pack(pady=(6, 0))
                 shown["v"] = True
-                tog.set_text("Hide stations")
+                tog.set_text(_("Hide stations"))
 
         tog = RButton(win.body, _("Choose stations"), toggle_view, kind="ghost",
                       width=150, height=32, radius=8, font_size=9, bg=CANVAS)
@@ -655,7 +655,7 @@ def run_gui(cfg_path: str):
         if not targets:
             ui.info(root, _("No stations"),
                     _("No stations answered the last scan. Press Rescan first.")); return
-        count_lbl.config(text="testing\u2026")
+        count_lbl.config(text=_("testing\u2026"))
         root.update_idletasks()
 
         def done(results):
@@ -721,7 +721,7 @@ def run_gui(cfg_path: str):
         scripts = list_local_scripts(cfg["scripts_dir"])
         if not scripts:
             tk.Label(actions,
-                     text="No actions yet.\nAdd a script file and it becomes a button.",
+                     text=_("No actions yet.\nAdd a script file and it becomes a button."),
                      bg=SURFACE, fg=MUTED, font=(UI, 10), justify=i18n.justify("left")
                      ).pack(anchor=i18n.anchor("w"), pady=20)
             return
@@ -814,7 +814,7 @@ def run_gui(cfg_path: str):
 
     # ---- discovery ----
     def refresh():
-        count_lbl.config(text="scanning\u2026")
+        count_lbl.config(text=_("scanning\u2026"))
         root.update_idletasks()
 
         def work():
@@ -826,7 +826,7 @@ def run_gui(cfg_path: str):
                     if done % 25 == 0 or done == total:
                         root.after(0, lambda: count_lbl.config(
                             text=_("deep scan {pct}%", pct=int(done * 100 / total))))
-                root.after(0, lambda: count_lbl.config(text="deep scan\u2026"))
+                root.after(0, lambda: count_lbl.config(text=_("deep scan\u2026")))
                 targets = scan_subnet(cfg, on_progress=prog)
 
             state["targets"] = targets

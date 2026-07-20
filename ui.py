@@ -683,7 +683,7 @@ def pick_file(parent, title="Choose a file", initialdir=None,
     lb.bind("<Return>", activate)
     load()
 
-    Checkbox(win.body, "Show all file types", variable=show_all, command=load,
+    Checkbox(win.body, _("Show all file types"), variable=show_all, command=load,
              bg=CANVAS, font_size=9, fg=MUTED).pack(anchor=i18n.anchor("w"), padx=22, pady=(6, 0))
 
     row = tk.Frame(win.body, bg=CANVAS); row.pack(pady=14)

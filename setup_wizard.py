@@ -931,9 +931,9 @@ def run_gui():
     # ---------------- step 1: password ----------------
     def step_password():
         clear(); dots.set(0)
-        title(stage, "Set the console password",
-              "You will type this every time you open ClassCtl. It is stored as a "
-              "hash, so nobody can read it back out of the files.")
+        title(stage, _("Set the console password"),
+              _("You will type this every time you open ClassCtl. It is stored as a "
+              "hash, so nobody can read it back out of the files."))
         c = card(stage)
 
         def field(lbl):
@@ -953,7 +953,7 @@ def run_gui():
         def tog():
             ch = "" if sv.get() else "\u2022"
             p1.config(show=ch); p2.config(show=ch)
-        ui.Checkbox(c, "Show password", variable=sv, command=tog, bg=SURFACE,
+        ui.Checkbox(c, _("Show password"), variable=sv, command=tog, bg=SURFACE,
                     font_size=9, fg=MUTED).pack(anchor=i18n.anchor("w"), pady=(8, 0))
 
         def nxt():
@@ -981,9 +981,9 @@ def run_gui():
     def step_options():
         clear(); dots.set(1)
         root.unbind("<Return>")
-        title(stage, "Location and starter actions",
-              "The folder is locked to administrators and hidden, because the "
-              "network key lives in it.")
+        title(stage, _("Location and starter actions"),
+              _("The folder is locked to administrators and hidden, because the "
+              "network key lives in it."))
         c = card(stage)
         pv = tk.StringVar(value=data["dir"])
         r = tk.Frame(c, bg=SURFACE); r.pack(fill="x")
@@ -1029,8 +1029,8 @@ def run_gui():
     # ---------------- step 3: review ----------------
     def step_review():
         clear(); dots.set(2)
-        title(stage, "Ready to install",
-              "Check this, then install. It takes a few seconds.")
+        title(stage, _("Ready to install"),
+              _("Check this, then install. It takes a few seconds."))
         c = card(stage)
         rows = [(_("This machine"), platform_summary(data["platform"])),
                 (_("Install to"), data["dir"]),
@@ -1062,9 +1062,9 @@ def run_gui():
     # ---------------- step 4: installing ----------------
     def step_install():
         clear(); dots.set(3)
-        title(stage, "Installing", "")
+        title(stage, _("Installing"), "")
         c = card(stage)
-        msg = tk.Label(c, text="Starting\u2026", bg=SURFACE, fg=INK, font=(UI, 10),
+        msg = tk.Label(c, text=_("Starting\u2026"), bg=SURFACE, fg=INK, font=(UI, 10),
                        anchor=i18n.anchor("w"))
         msg.pack(fill="x", pady=(2, 12))
         bar_ = ui.ProgressBar(c, width=460, height=10, bg=SURFACE); bar_.pack(anchor=i18n.anchor("w"))
@@ -1198,8 +1198,8 @@ def run_gui():
         clear()
         base = installed_dir() or DEFAULT_BASE
         missing = missing_starter_scripts(base, data["platform"])
-        title(stage, "Add actions",
-              "Only the ones you do not have yet are listed. Each becomes a button.")
+        title(stage, _("Add actions"),
+              _("Only the ones you do not have yet are listed. Each becomes a button."))
         if not missing:
             c = card(stage)
             tk.Label(c, text=_("Every starter action is already installed."),
@@ -1388,8 +1388,8 @@ def run_gui():
     def step_uninstall():
         clear()
         base = installed_dir() or DEFAULT_BASE
-        title(stage, "Uninstall ClassCtl",
-              "This undoes everything the installer changed on this computer.")
+        title(stage, _("Uninstall ClassCtl"),
+              _("This undoes everything the installer changed on this computer."))
         c = card(stage)
         for line_txt in ("Stops the agent and removes its scheduled task",
                          "Closes TCP 48720 and UDP 48719 in the firewall",
@@ -1402,14 +1402,14 @@ def run_gui():
 
         def do_uninstall():
             if not ui.confirm(root, _("Uninstall ClassCtl"),
-                              "Remove ClassCtl from this computer?\n"
-                              "The password and the network key are deleted with it.",
+                              _("Remove ClassCtl from this computer?\n"
+                              "The password and the network key are deleted with it."),
                               ok_text=_("Uninstall"), danger=True):
                 return
             clear()
-            title(stage, "Uninstalling", "")
+            title(stage, _("Uninstalling"), "")
             c2 = card(stage)
-            msg = tk.Label(c2, text="Working\u2026", bg=SURFACE, fg=INK,
+            msg = tk.Label(c2, text=_("Working\u2026"), bg=SURFACE, fg=INK,
                            font=(UI, 10), anchor=i18n.anchor("w"))
             msg.pack(fill="x", pady=(2, 12))
             bar_ = ui.ProgressBar(c2, width=440, height=10, bg=SURFACE)
