@@ -77,9 +77,58 @@ with socket.create_connection(("127.0.0.1", cfg["tcp_port"]), timeout=3) as s:
     common.send_msg(s, badcmd); resp = common.recv_msg(s)
 check("wrong key rejected", resp.get("ok") is False)
 
+# 4d) the station table: the agent stores what the console pushes, and hands it
+#     back. This is what lets any station wake the room.
+pushed = {"LAB9-07": {"mac": "aa:bb:cc:dd:ee:ff", "ip": "10.0.0.7", "ts": 100.0}}
+cmd = common.build_command(key, "set_stations", {"stations": pushed})
+with socket.create_connection(("127.0.0.1", cfg["tcp_port"]), timeout=3) as s:
+    common.send_msg(s, cmd); resp = common.recv_msg(s)
+check("set_stations accepted", resp.get("ok") is True)
+check("agent reports its mac", "mac" in resp)
+
+cmd = common.build_command(key, "get_stations")
+with socket.create_connection(("127.0.0.1", cfg["tcp_port"]), timeout=3) as s:
+    common.send_msg(s, cmd); back = common.recv_msg(s).get("result") or {}
+check("station survived the round trip", "LAB9-07" in back)
+check("mac normalised on the way in",
+      back.get("LAB9-07", {}).get("mac") == "AA-BB-CC-DD-EE-FF")
+
 stop.set(); srv.shutdown()
 
-# 5) static check: in any module that imports the translator, `_` is that
+# 5) wake-on-lan pieces
+pkt = common.magic_packet("AA-BB-CC-DD-EE-FF")
+check("magic packet is 102 bytes", len(pkt) == 102)
+check("magic packet starts with 6x FF", pkt[:6] == b"\xff" * 6)
+check("magic packet repeats the mac 16x",
+      pkt[6:] == bytes.fromhex("AABBCCDDEEFF") * 16)
+for bad in ("", "not-a-mac", "AA-BB-CC-DD-EE"):
+    try:
+        common.magic_packet(bad); ok_reject = False
+    except ValueError:
+        ok_reject = True
+    check(f"magic packet rejects {bad!r}", ok_reject)
+
+check("mac normalising accepts colons",
+      common.normalize_mac("aa:bb:cc:dd:ee:ff") == "AA-BB-CC-DD-EE-FF")
+check("mac normalising accepts bare hex",
+      common.normalize_mac("aabbccddeeff") == "AA-BB-CC-DD-EE-FF")
+check("mac normalising rejects junk", common.normalize_mac("hello") == "")
+
+# newest record wins, so a replaced PC overwrites its own old MAC
+old = {"LAB9-07": {"mac": "11-11-11-11-11-11", "ip": "10.0.0.7", "ts": 100.0}}
+newer = {"LAB9-07": {"mac": "22-22-22-22-22-22", "ip": "10.0.0.7", "ts": 200.0}}
+older = {"LAB9-07": {"mac": "33-33-33-33-33-33", "ip": "10.0.0.7", "ts": 50.0}}
+check("newer record replaces older",
+      common.merge_stations(old, newer)["LAB9-07"]["mac"] == "22-22-22-22-22-22")
+check("older record does not overwrite newer",
+      common.merge_stations(old, older)["LAB9-07"]["mac"] == "11-11-11-11-11-11")
+check("record without a mac is dropped",
+      "LAB9-08" not in common.merge_stations({}, {"LAB9-08": {"mac": "", "ts": 1}}))
+check("other stations are kept",
+      "LAB9-07" in common.merge_stations(old, {"LAB9-09": {"mac": "44-44-44-44-44-44",
+                                                           "ts": 1}}))
+
+# 6) static check: in any module that imports the translator, `_` is that
 # translator and nothing else. Using it as a throwaway silently shadows it and
 # breaks every later _("...") call in the file — this has bitten twice.
 import ast

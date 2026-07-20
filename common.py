@@ -13,12 +13,14 @@ import hmac
 import json
 import os
 import platform
+import re
 import socket
 import struct
+import subprocess
 import time
 
 # ---------- קבועים ----------
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PROTO_VERSION = 1
 IS_WINDOWS = platform.system() == "Windows"
 DEFAULT_TCP_PORT = 48720      # פקודות
@@ -26,6 +28,8 @@ DEFAULT_UDP_PORT = 48719      # גילוי מחשבים
 PBKDF2_ITERATIONS = 600_000   # לסיסמת הכניסה לתוכנה
 TS_WINDOW_SEC = 120           # חלון סבילות לשעון (מניעת replay)
 DISCOVERY_MAGIC = "CLASSCTL_DISCOVER_V1"
+WOL_PORTS = (9, 7)            # where magic packets are listened for
+STATIONS_FILE = "stations.json"
 
 
 # ---------- זיהוי כיתה לפי שם מחשב ----------
@@ -236,6 +240,155 @@ def natural_key(hostname: str):
     if label.isdigit():
         return (1, int(label), "")
     return (2, 0, label)
+
+
+# ---------- Wake-on-LAN ----------
+# A station that is off cannot answer discovery, so its MAC has to be known in
+# advance. Each agent reports its own MAC, the console collects them, and the
+# table is pushed back to every agent - that way any station can wake the room,
+# not only the one that happened to run the scan.
+def normalize_mac(mac: str) -> str:
+    """AA-BB-CC-DD-EE-FF, whatever separator came in. Empty if it is not a MAC."""
+    hexes = re.sub(r"[^0-9a-fA-F]", "", mac or "")
+    if len(hexes) != 12:
+        return ""
+    return "-".join(hexes[i:i + 2] for i in range(0, 12, 2)).upper()
+
+
+def primary_ipv4() -> str:
+    """The address this machine uses to reach the LAN, without sending anything."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))       # UDP connect: no packet leaves the host
+        return s.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        s.close()
+
+
+def local_mac() -> str:
+    """
+    MAC of the adapter that actually carries the LAN address.
+
+    Deliberately not uuid.getnode(): students install Hyper-V, VMware and
+    VirtualBox, each of which adds virtual adapters, and getnode() would happily
+    return one of those. A magic packet sent to a host-only adapter wakes
+    nothing. Matching on the routable IPv4 picks the real NIC.
+    """
+    ip = primary_ipv4()
+    try:
+        if IS_WINDOWS:
+            # PowerShell, not getmac/ipconfig: those localise their output and
+            # this college runs Hebrew Windows, so label parsing would break.
+            ps = ("$a = Get-NetIPAddress -AddressFamily IPv4 -IPAddress '%s' "
+                  "-ErrorAction Stop; "
+                  "(Get-NetAdapter -InterfaceIndex $a.InterfaceIndex).MacAddress" % ip)
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                capture_output=True, text=True, timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            mac = normalize_mac(out.stdout)
+            if mac:
+                return mac
+        else:
+            route = subprocess.run(["ip", "route", "get", "8.8.8.8"],
+                                   capture_output=True, text=True, timeout=10)
+            m = re.search(r"\bdev\s+(\S+)", route.stdout)
+            if m:
+                with open(f"/sys/class/net/{m.group(1)}/address", encoding="utf-8") as f:
+                    mac = normalize_mac(f.read())
+                if mac:
+                    return mac
+    except Exception:
+        pass
+
+    # Last resort. May be a virtual adapter, so it is only ever a fallback.
+    try:
+        import uuid
+        node = uuid.getnode()
+        return normalize_mac("%012x" % node)
+    except Exception:
+        return ""
+
+
+def magic_packet(mac: str) -> bytes:
+    """6 bytes of 0xFF, then the MAC repeated 16 times."""
+    clean = normalize_mac(mac)
+    if not clean:
+        raise ValueError(f"not a MAC address: {mac!r}")
+    raw = bytes.fromhex(clean.replace("-", ""))
+    return b"\xff" * 6 + raw * 16
+
+
+def wol_targets(ip: str = "") -> list[str]:
+    """Broadcast addresses to try: the subnet's own, then the global one."""
+    ip = ip or primary_ipv4()
+    out = []
+    if ip.count(".") == 3:
+        out.append(ip.rsplit(".", 1)[0] + ".255")     # /24, as the subnet scan assumes
+    out.append("255.255.255.255")
+    return out
+
+
+def send_wol(mac: str, ip_hint: str = "") -> int:
+    """Broadcast a magic packet. Returns how many datagrams got out."""
+    packet = magic_packet(mac)
+    sent = 0
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    try:
+        for addr in wol_targets(ip_hint):
+            for port in WOL_PORTS:
+                try:
+                    s.sendto(packet, (addr, port))
+                    sent += 1
+                except OSError:
+                    pass
+    finally:
+        s.close()
+    return sent
+
+
+# ---------- the shared station table ----------
+def stations_path(base_dir: str) -> str:
+    return os.path.join(base_dir, STATIONS_FILE)
+
+
+def load_stations(base_dir: str) -> dict:
+    try:
+        with open(stations_path(base_dir), encoding="utf-8") as f:
+            rec = json.load(f)
+        table = rec.get("stations")
+        return table if isinstance(table, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_stations(base_dir: str, table: dict) -> None:
+    with open(stations_path(base_dir), "w", encoding="utf-8") as f:
+        json.dump({"v": 1, "stations": table}, f, ensure_ascii=False, indent=2)
+
+
+def merge_stations(current: dict, incoming: dict) -> dict:
+    """
+    Newest record per host wins, so a replaced PC overwrites the old MAC by
+    itself. Records without a usable MAC are dropped rather than stored.
+    """
+    merged = dict(current or {})
+    for host, rec in (incoming or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        host = short_hostname(host)
+        mac = normalize_mac(rec.get("mac", ""))
+        if not host or not mac:
+            continue
+        clean = {"mac": mac, "ip": rec.get("ip", ""), "ts": float(rec.get("ts", 0) or 0)}
+        old = merged.get(host)
+        if old and float(old.get("ts", 0) or 0) > clean["ts"]:
+            continue
+        merged[host] = clean
+    return merged
 
 
 # ---------- running something in the logged-on user's session ----------

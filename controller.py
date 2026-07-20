@@ -90,7 +90,8 @@ def scan_subnet(cfg: dict, on_progress=None, rejected: list | None = None) -> li
                 host = common.short_hostname(res.get("host", ""))
                 if (host and host != my_host
                         and common.classroom_prefix(host) == my_prefix):
-                    found[host] = {"host": host, "ip": ip}
+                    found[host] = {"host": host, "ip": ip,
+                                   "mac": common.normalize_mac(res.get("mac", ""))}
             elif rejected is not None and "host" in res:
                 # An agent answered but refused the command: it is running and
                 # reachable, its network key simply does not match ours.
@@ -149,7 +150,8 @@ def discover_agents(cfg: dict) -> list[dict]:
             continue
         if host == my_host:
             continue
-        found[host] = {"host": host, "ip": addr[0]}
+        found[host] = {"host": host, "ip": addr[0],
+                       "mac": common.normalize_mac(r.get("mac", ""))}
     udp.close()
     return sorted(found.values(), key=lambda x: common.natural_key(x["host"]))
 
@@ -175,6 +177,45 @@ def broadcast_command(cfg: dict, targets: list[dict], cmd: str,
         th.start()
     for th in threads:
         th.join(timeout=CMD_TIMEOUT + 2)
+
+
+def learn_stations(base_dir: str, targets: list[dict]) -> dict:
+    """Fold what the scan just saw, plus this PC, into the stored table."""
+    now = time.time()
+    seen = {t["host"]: {"mac": t.get("mac", ""), "ip": t.get("ip", ""), "ts": now}
+            for t in targets if t.get("mac")}
+    me = common.local_mac()
+    if me:
+        seen[common.short_hostname()] = {"mac": me, "ip": common.primary_ipv4(),
+                                         "ts": now}
+    merged = common.merge_stations(common.load_stations(base_dir), seen)
+    common.save_stations(base_dir, merged)
+    return merged
+
+
+def push_stations(cfg: dict, targets: list[dict], table: dict) -> None:
+    """
+    Hand the table to every agent that answered. Any station can then wake the
+    room, no matter which one ran the scan. Best effort: a station that is busy
+    or gone simply keeps what it already had.
+    """
+    if not table:
+        return
+    broadcast_command(cfg, targets, "set_stations", {"stations": table},
+                      lambda host, res: None)
+
+
+def wake_targets(base_dir: str, online: list[dict]) -> list[dict]:
+    """Known stations in this group that are not answering right now."""
+    my_prefix = common.classroom_prefix()
+    awake = {t["host"] for t in online} | {common.short_hostname()}
+    out = []
+    for host, rec in common.load_stations(base_dir).items():
+        if host in awake or common.classroom_prefix(host) != my_prefix:
+            continue
+        if rec.get("mac"):
+            out.append({"host": host, "mac": rec["mac"], "ip": rec.get("ip", "")})
+    return sorted(out, key=lambda x: common.natural_key(x["host"]))
 
 
 def list_local_scripts(scripts_dir: str, include_hidden: bool = False) -> list[str]:
@@ -374,6 +415,9 @@ def run_gui(cfg_path: str):
     RButton(st_head, _("Test"), lambda: test_stations(), kind="ghost",
             width=74, height=30, radius=8, font_size=9, bg=CANVAS
             ).pack(side=i18n.side("right"), padx=6)
+    RButton(st_head, _("Wake"), lambda: wake_room(), kind="ghost",
+            width=80, height=30, radius=8, font_size=9, bg=CANVAS
+            ).pack(side=i18n.side("right"))
 
     grid_card_w = ui.Card(body, bg=CANVAS, pad=14)
     grid_card_w.pack(fill="x", pady=(8, 16))
@@ -619,6 +663,49 @@ def run_gui(cfg_path: str):
             show_results(_("Station test"), "ping", None, targets, results)
         send_async(_("Station test"), "ping", None, targets, done)
 
+    def wake_room():
+        """
+        Send a magic packet to every station in this group that is known but not
+        answering. Their MACs come from the shared table, so this works even
+        though the scan that learned them ran on a different PC.
+        """
+        known = common.load_stations(base_dir)
+        if not known:
+            ui.info(root, _("Nothing to wake"),
+                    _("No station has reported its address yet. Run a scan while "
+                      "the machines are on, and the table fills itself.")); return
+
+        asleep = wake_targets(base_dir, state["targets"])
+        if not asleep:
+            ui.info(root, _("Nothing to wake"),
+                    _("Every station in this room is already answering.")); return
+
+        if not ui.confirm(root, _("Wake the room"),
+                          _("Send a wake signal to {n} station(s)?", n=len(asleep))):
+            return
+
+        count_lbl.config(text=_("waking…"))
+        root.update_idletasks()
+
+        def work():
+            sent = 0
+            for st in asleep:
+                try:
+                    if common.send_wol(st["mac"], st.get("ip", "")):
+                        sent += 1
+                except Exception:
+                    pass
+
+            def done():
+                count_lbl.config(text=_("{n} online", n=len(state["targets"])))
+                # A woken PC needs a while to boot, so there is nothing to verify
+                # yet - say what was sent and let the next scan show the truth.
+                ui.success(root, _("Wake sent"),
+                           _("Sent to {n} station(s). Give them a minute to boot, "
+                             "then press Rescan.", n=sent))
+            root.after(0, done)
+        threading.Thread(target=work, daemon=True).start()
+
     def run_script_on_class(name):
         path = os.path.join(cfg["scripts_dir"], name)
         try:
@@ -846,6 +933,16 @@ def run_gui(cfg_path: str):
                 targets = scan_subnet(cfg, on_progress=prog)
 
             state["targets"] = targets
+
+            # Learn the MACs this scan saw and hand the table to everyone who
+            # answered. Still on the worker thread - this talks to the network,
+            # and doing it on the UI thread would freeze the window.
+            try:
+                table = learn_stations(base_dir, targets)
+                push_stations(cfg, targets, table)
+                state["asleep"] = wake_targets(base_dir, targets)
+            except Exception:
+                state["asleep"] = []
 
             def apply():
                 empty_lbl.pack_forget()

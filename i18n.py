@@ -199,6 +199,22 @@ HEBREW = {
     "Close windows": "סגירת חלונות",
     "Wake screens ": "הערת מסכים",
     "Prepare wol": "הכנה ל-WoL",
+
+    # waking the room over the network
+    "Wake": "הערה",
+    "Wake the room": "הערת הכיתה",
+    "Send a wake signal to {n} station(s)?": "לשלוח אות הערה ל-{n} עמדות?",
+    "waking…": "מעיר…",
+    "Wake sent": "אות ההערה נשלח",
+    "Sent to {n} station(s). Give them a minute to boot, then press Rescan.":
+        "נשלח ל-{n} עמדות. תן להן דקה לעלות, ואז לחץ סריקה מחדש.",
+    "Nothing to wake": "אין את מי להעיר",
+    "Every station in this room is already answering.":
+        "כל העמדות בכיתה כבר עונות.",
+    "No station has reported its address yet. Run a scan while the machines are "
+    "on, and the table fills itself.":
+        "אף עמדה עדיין לא דיווחה על הכתובת שלה. הרץ סריקה כשהמחשבים דלוקים, "
+        "והטבלה תתמלא מעצמה.",
     "Each one becomes a button. You can add or remove any time.":
         "כל אחת הופכת לכפתור. אפשר להוסיף או להסיר בכל עת.",
     "Ready to install": "מוכן להתקנה",

@@ -23,10 +23,40 @@ import common
 IS_WINDOWS = platform.system() == "Windows"
 _seen_nonces: set[str] = set()
 _nonce_lock = threading.Lock()
+_stations_lock = threading.Lock()
 
 
 def log(*a):
     print(time.strftime("%Y-%m-%d %H:%M:%S"), "[agent]", *a, flush=True)
+
+
+_mac_cache: dict[str, str] = {}
+_mac_lock = threading.Lock()
+
+
+def resolve_mac() -> str:
+    """Work out the MAC once and remember it. Takes ~2s: it shells out."""
+    with _mac_lock:
+        if "mac" in _mac_cache:
+            return _mac_cache["mac"]
+    mac = common.local_mac()          # slow, so resolved outside the lock
+    with _mac_lock:
+        _mac_cache.setdefault("mac", mac)
+        return _mac_cache["mac"]
+
+
+def known_mac() -> str:
+    """
+    Whatever has been resolved so far, without ever blocking. Discovery has to
+    answer instantly - a station that took two seconds to reply would look
+    offline right after boot, which is exactly when someone scans the room.
+    An early reply may carry no MAC; the next scan fills it in.
+    """
+    return _mac_cache.get("mac", "")
+
+
+def warm_mac() -> None:
+    threading.Thread(target=resolve_mac, daemon=True).start()
 
 
 # ---------- ביצוע פעולות מקומיות ----------
@@ -82,6 +112,24 @@ def do_run_script(scripts_dir: str, name: str, content_b64: str | None) -> str:
     return f"started: {name}"
 
 
+def agent_base_dir(cfg: dict) -> str:
+    """Where agent.json and the station table live."""
+    return cfg.get("base_dir") or os.path.dirname(os.path.abspath(cfg["scripts_dir"]))
+
+
+def do_set_stations(cfg: dict, incoming: dict) -> str:
+    """
+    Take the console's station table and merge it into ours. Every agent keeps a
+    copy, so a console running on any station can wake the room even though the
+    scan that learned the MACs happened somewhere else.
+    """
+    with _stations_lock:
+        base = agent_base_dir(cfg)
+        merged = common.merge_stations(common.load_stations(base), incoming)
+        common.save_stations(base, merged)
+    return f"stations: {len(merged)}"
+
+
 def do_list_scripts(scripts_dir: str) -> list[str]:
     if not os.path.isdir(scripts_dir):
         return []
@@ -119,6 +167,12 @@ class CommandHandler(socketserver.BaseRequestHandler):
                 self._reply(True, host=host, result=res)
             elif cmd == "list_scripts":
                 self._reply(True, host=host, result=do_list_scripts(cfg["scripts_dir"]))
+            elif cmd == "set_stations":
+                self._reply(True, host=host,
+                            result=do_set_stations(cfg, args.get("stations") or {}))
+            elif cmd == "get_stations":
+                self._reply(True, host=host,
+                            result=common.load_stations(agent_base_dir(cfg)))
             else:
                 self._reply(False, host=host, error=f"unknown cmd: {cmd}")
         except Exception as e:
@@ -127,7 +181,9 @@ class CommandHandler(socketserver.BaseRequestHandler):
 
     def _reply(self, ok, host="", result=None, error=""):
         try:
-            common.send_msg(self.request, {"ok": ok, "host": host,
+            # The MAC rides along on every reply, so the subnet-scan path learns
+            # it too and not only UDP discovery.
+            common.send_msg(self.request, {"ok": ok, "host": host, "mac": known_mac(),
                                            "result": result, "error": error})
         except Exception:
             pass
@@ -150,6 +206,7 @@ def discovery_listener(cfg: dict, stop: threading.Event):
     udp.settimeout(1.0)
     host = common.short_hostname()
     prefix = common.classroom_prefix()
+    warm_mac()                      # resolved in the background, never blocks
     log("discovery listening on udp", cfg.get("udp_port", common.DEFAULT_UDP_PORT))
     while not stop.is_set():
         try:
@@ -172,7 +229,7 @@ def discovery_listener(cfg: dict, stop: threading.Event):
             continue
         if not common.fresh_timestamp_ok(req.get("ts", 0)):
             continue
-        reply = {"host": host, "prefix": prefix}
+        reply = {"host": host, "prefix": prefix, "mac": known_mac()}
         udp.sendto(json.dumps(reply).encode("utf-8"), addr)
 
 
@@ -183,7 +240,8 @@ def main():
     cfg = common.load_config(args.config)
     cfg.setdefault("tcp_port", common.DEFAULT_TCP_PORT)
     cfg.setdefault("udp_port", common.DEFAULT_UDP_PORT)
-    cfg.setdefault("scripts_dir", os.path.join(os.path.dirname(os.path.abspath(args.config)), "scripts"))
+    cfg.setdefault("base_dir", os.path.dirname(os.path.abspath(args.config)))
+    cfg.setdefault("scripts_dir", os.path.join(cfg["base_dir"], "scripts"))
     os.makedirs(cfg["scripts_dir"], exist_ok=True)
 
     stop = threading.Event()
