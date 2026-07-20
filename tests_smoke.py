@@ -128,6 +128,34 @@ check("other stations are kept",
       "LAB9-07" in common.merge_stations(old, {"LAB9-09": {"mac": "44-44-44-44-44-44",
                                                            "ts": 1}}))
 
+# merging must never raise: it runs on the agent against a table that came off
+# the network and against a stations.json that a half-finished write can leave
+# malformed. An exception here would fail set_stations and the room would
+# quietly stop learning MACs.
+junk = [("bad ts", {}, {"A-1": {"mac": "aabbccddeeff", "ts": "abc"}}),
+        ("none ts", {}, {"A-1": {"mac": "aabbccddeeff", "ts": None}}),
+        ("list ts", {}, {"A-1": {"mac": "aabbccddeeff", "ts": [1, 2]}}),
+        ("corrupt stored ts", {"A-1": {"mac": "11-11-11-11-11-11", "ts": "junk"}},
+         {"A-1": {"mac": "aabbccddeeff", "ts": 5}}),
+        ("stored record not a dict", {"A-1": "garbage"},
+         {"A-1": {"mac": "aabbccddeeff", "ts": 5}}),
+        ("ip not a string", {}, {"A-1": {"mac": "aabbccddeeff", "ip": {}, "ts": 1}}),
+        ("incoming not a dict", {}, "nonsense")]
+for label, cur, inc in junk:
+    try:
+        common.merge_stations(cur, inc); survived = True
+    except Exception:
+        survived = False
+    check(f"merge survives {label}", survived)
+
+# and a corrupt table on disk reads as empty rather than exploding
+bad_dir = tempfile.mkdtemp()
+for blob in ('{"v":1,"stations":', '{"v":1,"stations":[1,2]}', '', 'hello'):
+    with open(os.path.join(bad_dir, common.STATIONS_FILE), "w", encoding="utf-8") as f:
+        f.write(blob)
+    check(f"corrupt table reads empty ({blob[:14]!r})",
+          common.load_stations(bad_dir) == {})
+
 # 6) static check: in any module that imports the translator, `_` is that
 # translator and nothing else. Using it as a throwaway silently shadows it and
 # breaks every later _("...") call in the file — this has bitten twice.

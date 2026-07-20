@@ -370,22 +370,39 @@ def save_stations(base_dir: str, table: dict) -> None:
         json.dump({"v": 1, "stations": table}, f, ensure_ascii=False, indent=2)
 
 
+def _as_ts(value) -> float:
+    """A timestamp we can compare. Anything unusable sorts as oldest."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def merge_stations(current: dict, incoming: dict) -> dict:
     """
     Newest record per host wins, so a replaced PC overwrites the old MAC by
     itself. Records without a usable MAC are dropped rather than stored.
+
+    Nothing in here may raise: it runs on the agent against a table that
+    arrived over the network and against stations.json on disk, which a
+    half-finished write can leave malformed. A crash here would fail the whole
+    set_stations command and the room would silently stop learning MACs.
     """
     merged = dict(current or {})
-    for host, rec in (incoming or {}).items():
+    if not isinstance(incoming, dict):
+        return merged
+    for host, rec in incoming.items():
         if not isinstance(rec, dict):
             continue
         host = short_hostname(host)
         mac = normalize_mac(rec.get("mac", ""))
         if not host or not mac:
             continue
-        clean = {"mac": mac, "ip": rec.get("ip", ""), "ts": float(rec.get("ts", 0) or 0)}
+        ip = rec.get("ip", "")
+        clean = {"mac": mac, "ip": ip if isinstance(ip, str) else "",
+                 "ts": _as_ts(rec.get("ts"))}
         old = merged.get(host)
-        if old and float(old.get("ts", 0) or 0) > clean["ts"]:
+        if isinstance(old, dict) and _as_ts(old.get("ts")) > clean["ts"]:
             continue
         merged[host] = clean
     return merged
