@@ -27,6 +27,74 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Write-Host "===== ClassCtl Installer =====" -ForegroundColor Cyan
 
 # ---------- 1) Python / exe ----------
+function Invoke-WingetPythonWithProgress {
+    # The rest of setup is a graphical wizard, but the wizard is written in
+    # Python - so at this point there is nothing to draw it with. winget can
+    # sit for a couple of minutes with no visible sign of life, which reads as
+    # a hang. WinForms is part of the OS, so a window is possible here even
+    # before Python exists. winget reports no machine-readable percentage, so
+    # the bar is a marquee: it says "still working", not "how far along".
+    $wingetArgs = @("install", "-e", "--id", "Python.Python.3.12",
+              "--accept-source-agreements", "--accept-package-agreements",
+              "--scope", "machine")   # per-user Python is invisible to SYSTEM
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+    } catch {
+        # No WinForms for some reason: fall back to a plain, blocking run.
+        & winget @wingetArgs
+        return
+    }
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "ClassCtl"
+    $form.Size = New-Object System.Drawing.Size(430, 170)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+    $form.ControlBox = $false
+    $form.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#EEF2F7")
+
+    $head = New-Object System.Windows.Forms.Label
+    $head.Text = "Installing Python"
+    $head.Font = New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
+    $head.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#16233A")
+    $head.Location = New-Object System.Drawing.Point(24, 22)
+    $head.Size = New-Object System.Drawing.Size(370, 30)
+    $form.Controls.Add($head)
+
+    $sub = New-Object System.Windows.Forms.Label
+    $sub.Text = "ClassCtl needs Python. This takes a minute or two."
+    $sub.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+    $sub.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#5A6B84")
+    $sub.Location = New-Object System.Drawing.Point(24, 54)
+    $sub.Size = New-Object System.Drawing.Size(370, 22)
+    $form.Controls.Add($sub)
+
+    $bar = New-Object System.Windows.Forms.ProgressBar
+    $bar.Style = "Marquee"
+    $bar.MarqueeAnimationSpeed = 30
+    $bar.Location = New-Object System.Drawing.Point(24, 88)
+    $bar.Size = New-Object System.Drawing.Size(370, 18)
+    $form.Controls.Add($bar)
+
+    $form.Show()
+    $form.Refresh()
+
+    $proc = Start-Process -FilePath "winget" -ArgumentList $wingetArgs -PassThru -WindowStyle Hidden
+    while (-not $proc.HasExited) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 120
+    }
+    $form.Close()
+    $form.Dispose()
+
+    if ($proc.ExitCode -ne 0) {
+        Write-Warning "winget exited with code $($proc.ExitCode)."
+    }
+}
+
 function Find-RealPython {
     # returns full path to a real python.exe, skipping the Microsoft Store alias
     foreach ($c in (Get-Command python.exe -All -ErrorAction SilentlyContinue)) {
@@ -58,7 +126,7 @@ if (-not $useExe) {
         if ($ans -match '^[Yy]') {
             if (Get-Command winget -ErrorAction SilentlyContinue) {
                 Write-Host "Installing Python via winget..." -ForegroundColor Cyan
-                winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+                Invoke-WingetPythonWithProgress
                 $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
                             [Environment]::GetEnvironmentVariable("Path","User")
                 $PyExe = Find-RealPython

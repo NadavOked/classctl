@@ -123,12 +123,54 @@ def sign(net_key_hex: str, payload: dict) -> str:
 
 
 def verify_sig(net_key_hex: str, payload: dict, sig: str) -> bool:
+    """
+    A wrong signature must return False, never raise. `sig` arrives straight out
+    of attacker-controlled JSON, and compare_digest throws TypeError on anything
+    that is not an ASCII str - which used to kill the discovery thread outright.
+    """
+    if not isinstance(sig, str) or not sig.isascii():
+        return False
     expected = sign(net_key_hex, payload)
-    return hmac.compare_digest(expected, sig or "")
+    return hmac.compare_digest(expected, sig)
 
 
 def fresh_timestamp_ok(ts: float) -> bool:
-    return abs(time.time() - float(ts)) <= TS_WINDOW_SEC
+    try:
+        return abs(time.time() - float(ts)) <= TS_WINDOW_SEC
+    except (TypeError, ValueError):
+        return False
+
+
+class NonceCache:
+    """
+    Remembers nonces for as long as they could still be replayed.
+
+    Behaves like a set so check_command can use it unchanged. Entries older than
+    the timestamp window are dropped, because a message that old is already
+    refused by fresh_timestamp_ok. The previous "clear everything at 5000"
+    threw away nonces that were still inside the window, which briefly let a
+    captured command through a second time.
+    """
+
+    def __init__(self, ttl: float = TS_WINDOW_SEC):
+        self.ttl = ttl
+        self._seen: dict[str, float] = {}
+
+    def _prune(self) -> None:
+        cutoff = time.time() - self.ttl
+        if len(self._seen) > 64:
+            self._seen = {n: t for n, t in self._seen.items() if t > cutoff}
+
+    def __contains__(self, nonce) -> bool:
+        entry = self._seen.get(nonce)
+        return entry is not None and entry > time.time() - self.ttl
+
+    def add(self, nonce) -> None:
+        self._prune()
+        self._seen[nonce] = time.time()
+
+    def __len__(self) -> int:
+        return len(self._seen)
 
 
 # ---------- פרוטוקול TCP: אורך (4 bytes) + JSON ----------
@@ -435,8 +477,13 @@ if ($RunningAsSystem) {
         $deadline = (Get-Date).AddSeconds(120)
         Start-Sleep -Seconds 2
         while ((Get-Date) -lt $deadline) {
-            $q = schtasks /query /tn __TASK__ /fo LIST 2>$null
-            if (-not ($q -match 'Running')) { break }
+            # Get-ScheduledTask returns an enum, so this still works on a
+            # localised Windows. Parsing schtasks output for 'Running' did not:
+            # on Hebrew Windows it reads פועל, the match always failed, and the
+            # wait broke on its first pass - meaning shutdown fired while the
+            # VMs it was supposed to wait for were still shutting down.
+            $st = (Get-ScheduledTask -TaskName '__TASK__' -ErrorAction SilentlyContinue).State
+            if ($st -ne 'Running') { break }
             Start-Sleep -Seconds 2
         }
         schtasks /delete /tn __TASK__ /f | Out-Null

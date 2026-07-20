@@ -222,13 +222,18 @@ if ($RunningAsSystem) {
     if ($u) {
         $tmp = "$env:windir\Temp\__TMP__"
         Set-Content -LiteralPath $tmp -Value $UserBody -Encoding UTF8
-        schtasks /create /tn __TASK__ /tr "powershell -NoProfile -ExecutionPolicy Bypass -File $tmp" /sc once /st 23:59 /ru "$u" /it /f | Out-Null
+        schtasks /create /tn __TASK__ /tr "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $tmp" /sc once /st 23:59 /ru "$u" /it /f | Out-Null
         schtasks /run /tn __TASK__ | Out-Null
         $deadline = (Get-Date).AddSeconds(120)
         Start-Sleep -Seconds 2
         while ((Get-Date) -lt $deadline) {
-            $q = schtasks /query /tn __TASK__ /fo LIST 2>$null
-            if (-not ($q -match 'Running')) { break }
+            # Get-ScheduledTask returns an enum, so this still works on a
+            # localised Windows. Parsing schtasks output for 'Running' did not:
+            # on Hebrew Windows it reads פועל, the match always failed, and the
+            # wait broke on its first pass - meaning shutdown fired while the
+            # VMs it was supposed to wait for were still shutting down.
+            $st = (Get-ScheduledTask -TaskName '__TASK__' -ErrorAction SilentlyContinue).State
+            if ($st -ne 'Running') { break }
             Start-Sleep -Seconds 2
         }
         schtasks /delete /tn __TASK__ /f | Out-Null
@@ -816,40 +821,6 @@ def restart_agent(base_dir: str) -> bool:
 
 
 
-COMMON_APPS = [
-    ("Word", "winword.exe"),
-    ("Excel", "excel.exe"),
-    ("PowerPoint", "powerpnt.exe"),
-    ("Notepad", "notepad.exe"),
-    ("Calculator", "calc.exe"),
-    ("Edge", "msedge.exe"),
-    ("Chrome", "chrome.exe"),
-]
-
-
-def app_script_name(label: str) -> str:
-    stem = "".join(c if (c.isalnum() or c in "-_") else "-"
-                   for c in os.path.splitext(os.path.basename(label))[0])
-    stem = stem.strip("-").lower() or "app"
-    return f"open-{stem}" + (".ps1" if IS_WINDOWS else ".sh")
-
-
-def write_app_script(base_dir: str, label: str, target: str) -> str:
-    """Save 'open this application' as an ordinary script, so it becomes a button."""
-    scripts_dir = os.path.join(base_dir, "scripts")
-    os.makedirs(scripts_dir, exist_ok=True)
-    fname = app_script_name(label)
-    path = os.path.join(scripts_dir, fname)
-    body = common.open_app_script(target, is_windows=IS_WINDOWS)
-    enc = "utf-8-sig" if fname.endswith(".ps1") else "utf-8"
-    nl = "\r\n" if fname.endswith(".ps1") else "\n"
-    with open(path, "w", encoding=enc, newline=nl) as f:
-        f.write(body)
-    if not IS_WINDOWS:
-        os.chmod(path, 0o755)
-    return fname
-
-
 def run_gui():
     import tkinter as tk
     import ui
@@ -1204,7 +1175,6 @@ def run_gui():
             c = card(stage)
             tk.Label(c, text=_("Every starter action is already installed."),
                      bg=SURFACE, fg=INK, font=(UI, 10)).pack(anchor=i18n.anchor("w"))
-            app_section(stage, base)
             ui.RButton(foot, _("Back"), step_launcher, kind="quiet", width=130,
                        height=46, bg=CANVAS).pack(side=i18n.side("right"), padx=30)
             settle()
@@ -1238,65 +1208,11 @@ def run_gui():
                        _("Added: {list}", list=(", ".join(created) or _("none"))))
             step_launcher()
 
-        app_section(stage, base)
-
         ui.RButton(foot, _("Add"), do_add, width=150, height=46,
                    bg=CANVAS).pack(side=i18n.side("right"), padx=30)
         ui.RButton(foot, _("Back"), step_launcher, kind="quiet", width=110,
                    height=46, bg=CANVAS).pack(side=i18n.side("right"))
         settle()
-
-    def app_section(parent, base):
-        """Turning an application into an action, from the installer as well."""
-        tk.Label(parent, text=_("Open an application"), bg=CANVAS, fg=MUTED,
-                 font=(UI, 9, "bold")).pack(anchor=i18n.anchor("w"), padx=30,
-                                            pady=(14, 4))
-        c = ui.Card(parent, bg=CANVAS, pad=16).pack(anchor=i18n.anchor("w"),
-                                                    padx=30).inner
-        tk.Label(c, text=_("Pick an application and it is saved as a script, so it "
-                           "becomes a button like the rest."),
-                 bg=SURFACE, fg=MUTED, font=(UI, 9), wraplength=400,
-                 justify=i18n.justify("left")).pack(anchor=i18n.anchor("w"))
-
-        row = tk.Frame(c, bg=SURFACE); row.pack(fill="x", pady=(10, 0))
-        pick = tk.StringVar(value=COMMON_APPS[0][0])
-        listbox = tk.Listbox(c, height=4, bd=0, highlightthickness=1, bg=FIELD,
-                             fg=INK, font=(UI, 10), selectbackground="#DCE8F7",
-                             selectforeground=INK, activestyle="none",
-                             highlightbackground=LINE)
-        for label, _target in COMMON_APPS:
-            listbox.insert("end", label)
-        listbox.selection_set(0)
-        listbox.pack(fill="x", pady=(0, 8))
-
-        custom = tk.Entry(c, font=(MONO, 9), relief="flat", bg=FIELD, fg=INK,
-                          insertbackground=INK)
-        custom.pack(fill="x", ipady=5)
-        tk.Label(c, text=_("or type a command or full path"), bg=SURFACE, fg=MUTED,
-                 font=(UI, 8)).pack(anchor=i18n.anchor("w"), pady=(2, 8))
-
-        def add_app():
-            target = custom.get().strip()
-            label = target
-            if not target:
-                sel = listbox.curselection()
-                if not sel:
-                    ui.info(root, _("Pick an app"),
-                            _("Choose one from the list, or type a command.")); return
-                label, target = COMMON_APPS[sel[0]]
-            try:
-                fname = write_app_script(base, label, target)
-            except PermissionError:
-                ui.error(root, _("Access denied"),
-                         _("Run this as administrator and try again.")); return
-            except Exception as e:
-                ui.error(root, _("Could not add"), str(e)); return
-            ui.success(root, _("Action added"),
-                       _("'{name}' is now a button. Press it to open the app on "
-                         "every station.", name=fname))
-
-        ui.RButton(c, _("Add an app"), add_app, kind="quiet", width=140, height=38,
-                   bg=SURFACE).pack(anchor=i18n.anchor("w"))
 
     # ---------------- update ----------------
     def step_update():
@@ -1450,7 +1366,11 @@ def run_gui():
     _orig_step_password = step_password
 
     def step_password_with_dots():
-        dots.c.pack(pady=(14, 0), before=stage)
+        # before= must name a widget that is actually packed in root. `stage` is
+        # the ScrollFrame's inner frame, which lives inside a canvas via
+        # create_window and is never packed, so passing it raised TclError and
+        # the Install button did nothing but show "Something went wrong".
+        dots.c.pack(pady=(14, 0), before=scroller.holder)
         _orig_step_password()
     step_password = step_password_with_dots
 

@@ -412,9 +412,6 @@ def run_gui(cfg_path: str):
 
     RButton(st_head, _("Rescan"), lambda: refresh(), kind="ghost",
             width=92, height=30, radius=8, font_size=9, bg=CANVAS).pack(side=i18n.side("right"))
-    RButton(st_head, _("Test"), lambda: test_stations(), kind="ghost",
-            width=74, height=30, radius=8, font_size=9, bg=CANVAS
-            ).pack(side=i18n.side("right"), padx=6)
     RButton(st_head, _("Wake"), lambda: wake_room(), kind="ghost",
             width=80, height=30, radius=8, font_size=9, bg=CANVAS
             ).pack(side=i18n.side("right"))
@@ -648,20 +645,6 @@ def run_gui(cfg_path: str):
                 width=110, height=44, bg=CANVAS).pack(side=i18n.side("left"), padx=6)
         RButton(row, _("Run now"), go, kind="primary",
                 width=150, height=44, bg=CANVAS).pack(side=i18n.side("left"), padx=6)
-
-    def test_stations():
-        """Harmless check before class: who answers, who does not."""
-        targets = list(state["targets"])
-        if not targets:
-            ui.info(root, _("No stations"),
-                    _("No stations answered the last scan. Press Rescan first.")); return
-        count_lbl.config(text=_("testing\u2026"))
-        root.update_idletasks()
-
-        def done(results):
-            count_lbl.config(text=_("{n} online", n=len(targets)))
-            show_results(_("Station test"), "ping", None, targets, results)
-        send_async(_("Station test"), "ping", None, targets, done)
 
     def wake_room():
         """

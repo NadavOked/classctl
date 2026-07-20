@@ -77,6 +77,47 @@ with socket.create_connection(("127.0.0.1", cfg["tcp_port"]), timeout=3) as s:
     common.send_msg(s, badcmd); resp = common.recv_msg(s)
 check("wrong key rejected", resp.get("ok") is False)
 
+# 4c-2) a malformed signature must be refused, not crash the listener. One UDP
+#       packet carrying {"sig": 1} used to raise TypeError out of
+#       discovery_listener and kill the thread for good - unauthenticated, and
+#       broadcastable to every station at once.
+for junk_sig in (1, [1], True, {}, None, "sig-with-non-ascii-ע"):
+    try:
+        refused = common.verify_sig(key, {"a": 1}, junk_sig) is False
+    except Exception:
+        refused = False
+    check(f"sig {junk_sig!a} refused without raising", refused)
+
+alive = threading.enumerate()
+for junk_sig in (1, [1], True):
+    bad_pkt = {"magic": common.DISCOVERY_MAGIC, "ts": time.time(),
+               "nonce": os.urandom(4).hex(), "sig": junk_sig}
+    udp.sendto(json.dumps(bad_pkt).encode(), ("127.0.0.1", cfg["udp_port"]))
+time.sleep(0.5)
+core = {"magic":common.DISCOVERY_MAGIC,"ts":time.time(),"nonce":os.urandom(8).hex()}
+pkt = dict(core); pkt["sig"] = common.sign(key, core)
+udp.sendto(json.dumps(pkt).encode(), ("127.0.0.1", cfg["udp_port"]))
+try:
+    udp.recvfrom(2048); still_up = True
+except Exception:
+    still_up = False
+check("discovery survives malformed signatures", still_up)
+
+# and a captured discovery packet must not be replayable for enumeration
+udp.sendto(json.dumps(pkt).encode(), ("127.0.0.1", cfg["udp_port"]))
+try:
+    udp.recvfrom(2048); replayed = True
+except Exception:
+    replayed = False
+check("replayed discovery packet is ignored", not replayed)
+
+# nonce cache drops only what is already too old to replay
+nc = common.NonceCache(ttl=0.4)
+nc.add("a")
+check("fresh nonce remembered", "a" in nc)
+time.sleep(0.6)
+check("expired nonce forgotten", "a" not in nc)
+
 # 4d) the station table: the agent stores what the console pushes, and hands it
 #     back. This is what lets any station wake the room.
 pushed = {"LAB9-07": {"mac": "aa:bb:cc:dd:ee:ff", "ip": "10.0.0.7", "ts": 100.0}}

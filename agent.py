@@ -21,7 +21,7 @@ import time
 import common
 
 IS_WINDOWS = platform.system() == "Windows"
-_seen_nonces: set[str] = set()
+_seen_nonces = common.NonceCache()
 _nonce_lock = threading.Lock()
 _stations_lock = threading.Lock()
 
@@ -138,7 +138,21 @@ def do_list_scripts(scripts_dir: str) -> list[str]:
 
 
 # ---------- שרת TCP לפקודות ----------
-class CommandHandler(socketserver.BaseRequestHandler):
+class CommandHandlerBase(socketserver.BaseRequestHandler):
+    """
+    Give every connection a deadline. ThreadingMixIn spawns a thread per
+    connection and _recv_exact blocks until it has its bytes, so without this
+    anyone who can reach the port exhausts the agent by opening sockets and
+    sending nothing at all. BaseRequestHandler ignores a `timeout` attribute
+    on its own - it has to be put on the socket.
+    """
+    timeout = 15.0
+
+    def setup(self):
+        self.request.settimeout(self.timeout)
+
+
+class CommandHandler(CommandHandlerBase):
     def handle(self):
         cfg = self.server.cfg
         try:
@@ -148,8 +162,6 @@ class CommandHandler(socketserver.BaseRequestHandler):
 
         with _nonce_lock:
             ok, reason = common.check_command(cfg["net_key"], msg, _seen_nonces)
-            if len(_seen_nonces) > 5000:
-                _seen_nonces.clear()
         if not ok:
             log("rejected:", reason, "from", self.client_address[0])
             self._reply(False, error=reason)
@@ -209,28 +221,50 @@ def discovery_listener(cfg: dict, stop: threading.Event):
     warm_mac()                      # resolved in the background, never blocks
     log("discovery listening on udp", cfg.get("udp_port", common.DEFAULT_UDP_PORT))
     while not stop.is_set():
+        # Nothing a stranger can put on the wire may end this loop. If the
+        # thread dies the station stops answering Rescan for good - while its
+        # TCP port keeps working, so it looks reachable and invisible at once.
         try:
-            data, addr = udp.recvfrom(2048)
-        except socket.timeout:
-            continue
-        except OSError:
-            break
-        try:
-            msg = data.decode("utf-8", "ignore")
+            try:
+                data, addr = udp.recvfrom(2048)
+            except socket.timeout:
+                continue
+            except OSError:
+                # On Windows an ICMP Port Unreachable from an earlier reply
+                # fails the *next* recvfrom with WSAECONNRESET. That is not
+                # fatal: drop the packet and keep listening.
+                if stop.is_set():
+                    break
+                continue
+
             import json
-            req = json.loads(msg)
-        except Exception:
+            req = json.loads(data.decode("utf-8", "ignore"))
+            if not isinstance(req, dict):
+                continue
+            if req.get("magic") != common.DISCOVERY_MAGIC:
+                continue
+            # מאמתים חתימה גם על הגילוי, כדי לא לחשוף מחשבים לכל שידור
+            core = {k: req.get(k) for k in ("magic", "ts", "nonce")}
+            if not common.verify_sig(cfg["net_key"], core, req.get("sig", "")):
+                continue
+            if not common.fresh_timestamp_ok(req.get("ts", 0)):
+                continue
+            # A signed request is still replayable off the wire, and the console
+            # broadcasts it to the whole subnet. Without this, anyone could
+            # capture one packet and re-use it to inventory the room.
+            nonce = req.get("nonce")
+            if not isinstance(nonce, str) or not nonce:
+                continue
+            with _nonce_lock:
+                if nonce in _seen_nonces:
+                    continue
+                _seen_nonces.add(nonce)
+
+            reply = {"host": host, "prefix": prefix, "mac": known_mac()}
+            udp.sendto(json.dumps(reply).encode("utf-8"), addr)
+        except Exception as e:
+            log("discovery: ignoring bad packet:", e)
             continue
-        if req.get("magic") != common.DISCOVERY_MAGIC:
-            continue
-        # מאמתים חתימה גם על הגילוי, כדי לא לחשוף מחשבים לכל שידור
-        core = {k: req.get(k) for k in ("magic", "ts", "nonce")}
-        if not common.verify_sig(cfg["net_key"], core, req.get("sig", "")):
-            continue
-        if not common.fresh_timestamp_ok(req.get("ts", 0)):
-            continue
-        reply = {"host": host, "prefix": prefix, "mac": known_mac()}
-        udp.sendto(json.dumps(reply).encode("utf-8"), addr)
 
 
 def main():
