@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+logs/
+# קבצי קונפיג נוצרים בהתקנה ומכילים סודות — לא מעלים אותם
+controller.json
+agent.json
+scripts/
