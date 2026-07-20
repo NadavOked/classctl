@@ -733,97 +733,6 @@ def run_gui(cfg_path: str):
                     kind=kind, width=330, height=46, bg=SURFACE
                     ).grid(row=i // 2, column=i18n.column(i % 2, 2), padx=5, pady=5)
 
-    # ---- open an application on every station ----
-    COMMON_APPS = [
-        ("Word", "winword.exe"),
-        ("Excel", "excel.exe"),
-        ("PowerPoint", "powerpnt.exe"),
-        ("Notepad", "notepad.exe"),
-        ("Calculator", "calc.exe"),
-        ("File Explorer", "explorer.exe"),
-        ("Edge", "msedge.exe"),
-        ("Chrome", "chrome.exe"),
-    ]
-
-    def open_app():
-        """Pick an application and start it on every station, in the user's session."""
-        win = ui.Window(root, _("Open an app on every station"), 470, 520)
-
-        tk.Label(win.body, text=_("PICK AN APP"), bg=CANVAS, fg=MUTED,
-                 font=(UI, 9, "bold")).pack(anchor=i18n.anchor("w"), padx=24, pady=(18, 8))
-
-        card = tk.Frame(win.body, bg=SURFACE, highlightbackground=LINE,
-                        highlightthickness=1)
-        card.pack(fill="x", padx=24)
-        lb = tk.Listbox(card, bd=0, highlightthickness=0, bg=SURFACE, fg=INK,
-                        font=(UI, 10), selectbackground="#DCE8F7",
-                        selectforeground=INK, activestyle="none", height=8)
-        lb.pack(fill="x", padx=10, pady=10)
-        for label, _cmd in COMMON_APPS:
-            lb.insert("end", label)
-
-        tk.Label(win.body, text=_("OR TYPE A COMMAND / PATH"), bg=CANVAS, fg=MUTED,
-                 font=(UI, 9, "bold")).pack(anchor=i18n.anchor("w"), padx=24, pady=(16, 6))
-        row = tk.Frame(win.body, bg=CANVAS); row.pack(fill="x", padx=24)
-        custom = tk.Entry(row, font=(MONO, 9), relief="flat", bg=ui.FIELD, fg=INK,
-                          insertbackground=INK)
-        custom.pack(side=i18n.side("left"), fill="x", expand=True, ipady=6)
-
-        def browse():
-            f = filedialog.askopenfilename(
-                parent=win, title="Choose a program",
-                initialdir=("C:\\Program Files" if os.name == "nt" else "/usr/bin"),
-                filetypes=[("Programs", "*.exe *.bat *.cmd *.lnk"),
-                           ("All files", "*.*")])
-            win.after(60, win.focus_force)
-            if f:
-                custom.delete(0, "end"); custom.insert(0, f)
-        RButton(row, _("Browse"), browse, kind="quiet", width=88, height=30,
-                radius=8, font_size=9, bg=CANVAS).pack(side=i18n.side("left"), padx=8)
-
-        tk.Label(win.body, text=_("It opens on the station screens, not here."),
-                 bg=CANVAS, fg=MUTED, font=(UI, 9)).pack(anchor=i18n.anchor("w"), padx=24,
-                                                          pady=(8, 0))
-
-        def go():
-            target = custom.get().strip()
-            name = target
-            if not target:
-                sel = lb.curselection()
-                if not sel:
-                    ui.info(win, _("Pick an app"),
-                            _("Choose one from the list, or type a command.")); return
-                name, target = COMMON_APPS[sel[0]]
-
-            # Saved as an ordinary script, so it becomes a button like any other
-            # and can be edited or deleted from this same window.
-            stem = os.path.splitext(os.path.basename(name))[0]
-            stem = "".join(c if (c.isalnum() or c in "-_") else "-"
-                           for c in stem).strip("-").lower() or "app"
-            fname = f"open-{stem}" + (".ps1" if os.name == "nt" else ".sh")
-            path = os.path.join(cfg["scripts_dir"], fname)
-            script = common.open_app_script(target, is_windows=(os.name == "nt"))
-            try:
-                enc = "utf-8-sig" if fname.endswith(".ps1") else "utf-8"
-                nl = "\r\n" if fname.endswith(".ps1") else "\n"
-                with open(path, "w", encoding=enc, newline=nl) as f:
-                    f.write(script)
-                if os.name != "nt":
-                    os.chmod(path, 0o755)
-            except Exception as e:
-                ui.error(win, _("Could not add script"), str(e)); return
-            win.destroy()
-            build_action_buttons()
-            ui.success(root, _("Action added"),
-                       _("'{name}' is now a button. Press it to open the app on "
-                         "every station.", name=action_title(fname)))
-
-        brow = tk.Frame(win.body, bg=CANVAS); brow.pack(pady=18)
-        RButton(brow, _("Cancel"), win.destroy, kind="quiet",
-                width=110, height=42, bg=CANVAS).pack(side=i18n.side("left"), padx=6)
-        RButton(brow, _("Open on all"), go, kind="primary",
-                width=150, height=42, bg=CANVAS).pack(side=i18n.side("left"), padx=6)
-
     # ---- scripts manager (folder is ACL-protected; Explorer cannot open it) ----
     def manage_scripts():
         win = ui.Window(root, _("Manage scripts"), 460, 470)
@@ -893,26 +802,14 @@ def run_gui(cfg_path: str):
             except Exception as e:
                 ui.error(win, _("Could not open editor"), str(e))
 
-        tk.Label(win.body,
-                 text=_("An app can become an action too: pick one and it is "
-                        "saved here as a script."),
-                 bg=CANVAS, fg=MUTED, font=(UI, 9), wraplength=400,
-                 justify=i18n.justify("left")).pack(anchor=i18n.anchor("w"),
-                                                    padx=24, pady=(10, 0))
-
-        row = tk.Frame(win.body, bg=CANVAS); row.pack(pady=(12, 4))
+        row = tk.Frame(win.body, bg=CANVAS); row.pack(pady=(12, 16))
         RButton(row, _("Close"), win.destroy, kind="quiet",
                 width=86, height=40, bg=CANVAS).pack(side=i18n.side("left"), padx=4)
         RButton(row, _("Edit"), edit_script, kind="ghost",
                 width=86, height=40, bg=CANVAS).pack(side=i18n.side("left"), padx=4)
         RButton(row, _("Delete"), delete_script, kind="danger",
                 width=96, height=40, bg=CANVAS).pack(side=i18n.side("left"), padx=4)
-
-        row2 = tk.Frame(win.body, bg=CANVAS); row2.pack(pady=(0, 16))
-        RButton(row2, _("Add an app"), (lambda: (win.destroy(), open_app())),
-                kind="quiet", width=130, height=40,
-                bg=CANVAS).pack(side=i18n.side("left"), padx=4)
-        RButton(row2, _("Add script"), add_script, kind="primary",
+        RButton(row, _("Add script"), add_script, kind="primary",
                 width=120, height=40, bg=CANVAS).pack(side=i18n.side("left"), padx=4)
 
     # ---- discovery ----

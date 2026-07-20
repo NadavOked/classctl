@@ -271,6 +271,32 @@ if ($gw -eq 0) {
 """
 
 
+# Opening an Office app on a *blank* page is not the same as starting it.
+# Start-Process winword.exe lands on the template gallery and the recent-files
+# list, so the class sits looking at a menu instead of an empty page. The
+# command-line switches only cover part of it (winword /w, powerpnt /B) and
+# Excel has no equivalent at all, so COM is the one road that works for all
+# three. If Office is missing or COM is blocked, fall back to just starting it.
+_WIN_OFFICE_APP = r"""
+try {
+    $app = New-Object -ComObject __PROGID__
+    $app.Visible = $true
+    $app.__COLLECTION__.Add() | Out-Null
+} catch {
+    try { Start-Process __EXE__ } catch {}
+}
+"""
+
+
+def _win_office_script(prog_id: str, collection: str, exe: str,
+                       task: str, tmp: str) -> str:
+    body = (_WIN_OFFICE_APP
+            .replace("__PROGID__", prog_id)
+            .replace("__COLLECTION__", collection)
+            .replace("__EXE__", exe))
+    return _win_user_only(body, task, tmp)
+
+
 def _win_user_only(body: str, task: str, tmp: str) -> str:
     """No VM logic - just run this in the logged-on user's session."""
     head = "$RunningAsSystem = ([Security.Principal.WindowsIdentity]::GetCurrent().Name -eq 'NT AUTHORITY\\SYSTEM')\n"
@@ -356,6 +382,18 @@ def basic_script_defs(plat: dict | None = None) -> dict[str, tuple[str, str]]:
                                           "", "ClassCtlClose", "cc_close.ps1")),
             "wake_screens": ("wake-screens.ps1",
                              _win_user_only(_WIN_WAKE, "ClassCtlWake", "cc_wake.ps1")),
+            "open_word": ("open-word.ps1",
+                          _win_office_script("Word.Application", "Documents",
+                                             "winword.exe", "ClassCtlWord",
+                                             "cc_word.ps1")),
+            "open_excel": ("open-excel.ps1",
+                           _win_office_script("Excel.Application", "Workbooks",
+                                              "excel.exe", "ClassCtlExcel",
+                                              "cc_excel.ps1")),
+            "open_powerpoint": ("open-powerpoint.ps1",
+                                _win_office_script("PowerPoint.Application",
+                                                   "Presentations", "powerpnt.exe",
+                                                   "ClassCtlPpt", "cc_ppt.ps1")),
         }
 
     return {
@@ -382,6 +420,15 @@ fi
                          "#!/bin/bash\nexport DISPLAY=${DISPLAY:-:0}\n"
                          "if command -v xset >/dev/null 2>&1; then\n"
                          "  xset dpms force on\n  xset s reset\nfi\n"),
+        # LibreOffice opens straight onto an empty document with these, so the
+        # Linux side needs no COM equivalent.
+        "open_word": ("open-writer.sh",
+                      common.open_app_script("soffice --writer", is_windows=False)),
+        "open_excel": ("open-calc.sh",
+                       common.open_app_script("soffice --calc", is_windows=False)),
+        "open_powerpoint": ("open-impress.sh",
+                            common.open_app_script("soffice --impress",
+                                                   is_windows=False)),
     }
 
 
@@ -959,7 +1006,10 @@ def run_gui():
         labels = {"shutdown": _("Shut down"), "restart": _("Restart"),
                   "reset_network": _("Reset network card"),
                   "close_windows": _("Close open windows"),
-                  "wake_screens": _("Wake screens")}
+                  "wake_screens": _("Wake screens"),
+                  "open_word": _("Open Word"),
+                  "open_excel": _("Open Excel"),
+                  "open_powerpoint": _("Open PowerPoint")}
         vs = {k: tk.BooleanVar(value=(k in data["scripts"])) for k in labels}
         for k, t in labels.items():
             ui.Checkbox(c2, t, variable=vs[k], bg=SURFACE).pack(anchor=i18n.anchor("w"), pady=2)
@@ -1164,7 +1214,10 @@ def run_gui():
         labels = {"shutdown": _("Shut down"), "restart": _("Restart"),
                   "reset_network": _("Reset network card"),
                   "close_windows": _("Close open windows"),
-                  "wake_screens": _("Wake screens")}
+                  "wake_screens": _("Wake screens"),
+                  "open_word": _("Open Word"),
+                  "open_excel": _("Open Excel"),
+                  "open_powerpoint": _("Open PowerPoint")}
         vs = {k: tk.BooleanVar(value=True) for k in missing}
         for k in missing:
             ui.Checkbox(c, labels.get(k, k), variable=vs[k],
@@ -1417,7 +1470,9 @@ def run_cli():
     chosen = []
     for k, txt in (("shutdown", "shutdown"), ("restart", "restart"),
                    ("reset_network", "reset network"), ("close_windows", "close windows"),
-                   ("wake_screens", "wake screens")):
+                   ("wake_screens", "wake screens"), ("open_word", "open Word"),
+                   ("open_excel", "open Excel"),
+                   ("open_powerpoint", "open PowerPoint")):
         if input(f"Add basic script '{txt}'? [Y/n]: ").strip().lower() != "n":
             chosen.append(k)
     info = do_setup(p1, base, protect, chosen)

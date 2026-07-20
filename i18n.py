@@ -87,8 +87,6 @@ HEBREW = {
     "like the rest.":
         "בחר תוכנה והיא תישמר כסקריפט, כך שתהפוך לכפתור כמו כל השאר.",
     "or type a command or full path": "או הקלד פקודה או נתיב מלא",
-    "An app can become an action too: pick one and it is saved here as a script.":
-        "גם תוכנה יכולה להפוך לפעולה: בחר אחת והיא תישמר כאן כסקריפט.",
     "Action added": "הפעולה נוספה",
     "'{name}' is now a button. Press it to open the app on every station.":
         "'{name}' הוא כפתור עכשיו. לחיצה עליו תפתח את התוכנה בכל העמדות.",
@@ -106,13 +104,7 @@ HEBREW = {
         "אין עדיין פעולות.\nהוסף קובץ סקריפט והוא יהפוך לכפתור.",
 
     # --- open an app ---
-    "Open an app on every station": "פתיחת תוכנה בכל העמדות",
-    "PICK AN APP": "בחר תוכנה",
-    "OR TYPE A COMMAND / PATH": "או הקלד פקודה / נתיב",
     "Browse": "עיון",
-    "It opens on the station screens, not here.":
-        "התוכנה תיפתח על מסכי העמדות, לא כאן.",
-    "Open on all": "פתח בכולן",
     "Pick an app": "בחר תוכנה",
     "Choose one from the list, or type a command.":
         "בחר אחת מהרשימה, או הקלד פקודה.",
@@ -198,6 +190,9 @@ HEBREW = {
     "Reset network": "איפוס רשת",
     "Close windows": "סגירת חלונות",
     "Wake screens ": "הערת מסכים",
+    "Open Word": "פתיחת Word",
+    "Open Excel": "פתיחת Excel",
+    "Open PowerPoint": "פתיחת PowerPoint",
     "Prepare wol": "הכנה ל-WoL",
 
     # waking the room over the network
