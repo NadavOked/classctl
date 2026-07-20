@@ -27,7 +27,50 @@ if not defined PYW goto nopython
 if "%PYW%"=="" goto nopython
 if not exist "%PYW%" goto nopython
 
+REM Pre-flight, with a console attached: load the code and check tkinter.
+REM pythonw has no stdout and no stdin, so an import error or a missing tkinter
+REM produces a brief flash and then nothing at all, forever. Catch it here,
+REM where it can still be printed.
+set "PYC=%PYW:pythonw.exe=python.exe%"
+set "PREFLIGHT=%TEMP%\classctl-preflight.log"
+del "%PREFLIGHT%" >nul 2>&1
+if exist "%PYC%" (
+    "%PYC%" -c "import sys; sys.path.insert(0, r'%~dp0.'); import tkinter, common, ui, i18n, setup_wizard" 2>"%PREFLIGHT%"
+    if errorlevel 1 (
+        echo.
+        echo ============================================================
+        echo  ClassCtl could not start. The reason is below.
+        echo ============================================================
+        echo.
+        type "%PREFLIGHT%"
+        echo.
+        echo  If this mentions a missing module, reinstall Python with
+        echo  "Install for all users" and "Add python.exe to PATH".
+        echo.
+        pause
+        exit /b 1
+    )
+)
+
+REM Clear any crash log from a previous attempt, so what we find afterwards
+REM belongs to this run.
+set "CRASHLOG=%TEMP%\classctl-setup-error.log"
+del "%CRASHLOG%" >nul 2>&1
+
 start "" "%PYW%" "%~dp0setup_wizard.py"
+
+REM The wizard runs detached so no console lingers. If it died on the way up it
+REM leaves a log behind - surface that instead of leaving the screen blank.
+timeout /t 4 /nobreak >nul 2>&1
+if exist "%CRASHLOG%" (
+    echo.
+    echo  ClassCtl setup stopped during start-up:
+    echo.
+    type "%CRASHLOG%"
+    echo.
+    pause
+    exit /b 1
+)
 exit /b 0
 
 :nopython

@@ -821,6 +821,41 @@ def restart_agent(base_dir: str) -> bool:
 
 
 
+CRASH_LOG = os.path.join(tempfile.gettempdir(), "classctl-setup-error.log")
+
+
+def report_fatal(detail: str) -> None:
+    """
+    Make a startup failure visible.
+
+    install.bat launches this with pythonw so no console flashes up - which
+    also means there is no stdout to print to and no stdin to wait on. Anything
+    that goes wrong before the window exists used to produce complete silence:
+    double-click, brief flash, nothing, forever. Write it down, then say so in
+    a message box that needs neither a console nor tkinter.
+    """
+    try:
+        with open(CRASH_LOG, "w", encoding="utf-8") as f:
+            f.write(detail)
+    except Exception:
+        pass
+    try:
+        print(detail)          # only lands somewhere when run from a console
+    except Exception:
+        pass
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "ClassCtl setup could not start.\n\n%s\n\nFull details:\n%s"
+                % (detail.strip().splitlines()[-1] if detail.strip() else "",
+                   CRASH_LOG),
+                "ClassCtl setup", 0x10)
+        except Exception:
+            pass
+
+
 def run_gui():
     import tkinter as tk
     import ui
@@ -1410,7 +1445,8 @@ if __name__ == "__main__":
         import tkinter  # noqa: F401
         has_tk = True
     except Exception as e:
-        print("tkinter not available:", e)
+        report_fatal("Python on this computer has no tkinter, so the setup "
+                     "window cannot be shown.\n\n%s" % e)
         has_tk = False
 
     if has_tk:
@@ -1418,12 +1454,7 @@ if __name__ == "__main__":
             run_gui()
         except Exception:
             import traceback
-            traceback.print_exc()
-            print("\n[ERROR] Setup GUI failed. See the traceback above.")
-            try:
-                input("Press Enter to close...")
-            except EOFError:
-                pass
+            report_fatal(traceback.format_exc())
             sys.exit(1)
     else:
         sys.exit(run_cli())
